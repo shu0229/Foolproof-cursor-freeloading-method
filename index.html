@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cursor API 控制面板</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .status.running {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.stopped {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .control-panel {
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .panel-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .start-btn { background-color: #28a745; }
+        .stop-btn { background-color: #dc3545; }
+        .clean-btn {
+            background-color: #17a2b8;
+            margin-top: 0;
+            font-weight: bold;
+        }
+        .logs {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .token-section {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .refresh-btn {
+            width: auto;
+            padding: 5px 15px;
+            background-color: #6c757d;
+        }
+        
+        .token-list {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        
+        .token-item {
+            padding: 5px;
+            border-bottom: 1px solid #dee2e6;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+        
+        .token-item:last-child {
+            border-bottom: none;
+        }
+        
+        .port-status {
+            font-size: 12px;
+            margin-top: 5px;
+            color: #666;
+        }
+        
+        .server-info {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+        }
+        
+        .info-item {
+            margin-bottom: 10px;
+        }
+        
+        .info-label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .info-value {
+            font-family: monospace;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        
+        .info-note {
+            font-size: 12px;
+            color: #666;
+            margin-left: 10px;
+        }
+        
+        .model-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .model-item {
+            padding: 5px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .notice {
+            padding: 15px;
+            margin-bottom: 20px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            border-radius: 4px;
+            color: #856404;
+            font-size: 16px;
+        }
+        
+        .notice strong {
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cursor API 控制面板</h1>
+        
+        <div class="notice">
+            <strong>重要提示：</strong>调用时直接填写调用地址无需填写token，项目自动调用本地token.txt内的的token。
+        </div>
+
+        <div id="apiStatus" class="status">
+            检查服务器状态...
+        </div>
+
+        <div class="button-group">
+            <div class="control-panel">
+                <div class="panel-title">端口管理</div>
+                <button id="cleanPort" class="clean-btn">清理端口</button>
+            </div>
+            <div class="control-panel">
+                <div class="panel-title">API 服务器</div>
+                <button id="startApi" class="start-btn">启动服务器</button>
+                <button id="stopApi" class="stop-btn">停止服务器</button>
+            </div>
+            <div class="control-panel">
+                <div class="panel-title">Token 管理</div>
+                <button id="startToken" class="start-btn">获取Token</button>
+            </div>
+        </div>
+
+        <div class="token-section">
+            <div class="section-header">
+                <div class="panel-title">Token列表 (<span id="tokenCount">0</span>)</div>
+                <button id="refreshTokens" class="refresh-btn">刷新列表</button>
+            </div>
+            <div class="token-list" id="tokenList">
+                <!-- Token列表将在这里显示 -->
+            </div>
+        </div>
+
+        <div class="server-info">
+            <div class="info-item">
+                <span class="info-label">API服务器地址:</span>
+                <span class="info-value" id="apiServerUrl">http://localhost:3010</span>
+                <span class="info-label">酒馆填：</span>
+                <span class="info-value" id="apiServerUrl">http://localhost:3010/v1</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">支持模型:</span>
+                <span class="info-note">（复制填入）</span>
+                <div class="model-list" id="modelList">
+                    <!-- 模型列表将通过JavaScript动态生成 -->
+                </div>
+            </div>
+        </div>
+
+        <div class="logs" id="logs"></div>
+    </div>
+
+    <script>
+        const addLog = (message) => {
+            const logs = document.getElementById('logs');
+            const time = new Date().toLocaleTimeString();
+            logs.innerHTML = `<div>[${time}] ${message}</div>` + logs.innerHTML;
+        };
+
+        const updateStatus = async () => {
+            try {
+                await checkPort();  // 添加端口检查
+                const response = await fetch('/api/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                const apiStatus = document.getElementById('apiStatus');
+                const startApiBtn = document.getElementById('startApi');
+                const stopApiBtn = document.getElementById('stopApi');
+                
+                if (data.apiServer) {
+                    apiStatus.className = 'status running';
+                    apiStatus.textContent = 'API服务器运行中';
+                    startApiBtn.disabled = true;
+                    stopApiBtn.disabled = false;
+                } else {
+                    apiStatus.className = 'status stopped';
+                    apiStatus.textContent = 'API服务器已停止';
+                    startApiBtn.disabled = false;
+                    stopApiBtn.disabled = true;
+                }
+
+                if (data.error) {
+                    addLog(`服务器错误: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Status update failed:', error);
+                addLog(`状态更新失败: ${error.message}`);
+                document.getElementById('apiStatus').className = 'status stopped';
+                document.getElementById('apiStatus').textContent = '无法连接到控制面板';
+            }
+        };
+
+        document.getElementById('startApi').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                addLog(data.message);
+                await updateStatus();
+            } catch (error) {
+                console.error('Start failed:', error);
+                addLog(`启动失败: ${error.message}`);
+            }
+        });
+
+        document.getElementById('stopApi').addEventListener('click', async () => {
+            if (confirm('确定要停止API服务器吗？')) {
+                try {
+                    const response = await fetch('/api/stop', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const data = await response.json();
+                    addLog(data.message);
+                    await updateStatus();
+                } catch (error) {
+                    console.error('Stop failed:', error);
+                    addLog(`停止失败: ${error.message}`);
+                }
+            }
+        });
+
+        document.getElementById('startToken').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/token/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                addLog(data.message);
+                
+                // 监听Python进程输出
+                const eventSource = new EventSource('/token-process-output');
+                
+                eventSource.addEventListener('output', async (event) => {
+                    const data = JSON.parse(event.data);
+                    addLog(data.message);
+                    
+                    // 当检测到特定消息时刷新token列表
+                    if (data.message.includes('Token获取完成') || 
+                        data.message.includes('新增Token成功') ||
+                        data.message.includes('Token已存在')) {
+                        await refreshTokenList();
+                    }
+                });
+
+                eventSource.addEventListener('error', (event) => {
+                    if (event.data) {
+                        const data = JSON.parse(event.data);
+                        addLog(`Error: ${data.error}`);
+                    }
+                    eventSource.close();
+                });
+
+                eventSource.addEventListener('exit', async (event) => {
+                    const data = JSON.parse(event.data);
+                    addLog(`进程已退出，退出码: ${data.code}`);
+                    eventSource.close();
+                    await refreshTokenList();  // 进程结束时刷新列表
+                });
+            } catch (error) {
+                console.error('Token start failed:', error);
+                addLog(`启动Token获取失败: ${error.message}`);
+            }
+        });
+
+        // 修改refreshTokenList函数
+        const refreshTokenList = async () => {
+            try {
+                const response = await fetch('/api/tokens');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                const tokenList = document.getElementById('tokenList');
+                const tokenCount = document.getElementById('tokenCount');
+                
+                tokenList.innerHTML = data.tokens.map(token => 
+                    `<div class="token-item">${token}</div>`
+                ).join('');
+                
+                tokenCount.textContent = data.tokens.length;
+                addLog(`Token列表已更新，共有 ${data.tokens.length} 个Token`);
+            } catch (error) {
+                console.error('Failed to refresh tokens:', error);
+                addLog(`刷新Token列表失败: ${error.message}`);
+            }
+        };
+
+        // 监听刷新按钮点击
+        document.getElementById('refreshTokens').addEventListener('click', refreshTokenList);
+
+        // 在页面加载时刷新Token列表
+        refreshTokenList();
+
+        // 修改checkPort函数
+        const checkPort = async () => {
+            try {
+                const response = await fetch('/api/check-port');
+                const data = await response.json();
+                const apiStatus = document.getElementById('apiStatus');
+                
+                if (data.inUse) {
+                    apiStatus.textContent = 'API端口(3010)被占用';
+                    apiStatus.className = 'status stopped';
+                    document.getElementById('startApi').disabled = true;
+                } else {
+                    document.getElementById('startApi').disabled = false;
+                }
+            } catch (error) {
+                console.error('Port check failed:', error);
+            }
+        };
+
+        // 添加端口清理功能
+        document.getElementById('cleanPort').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/clean-port', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const data = await response.json();
+                addLog(data.message);
+                await checkPort();
+                await updateStatus();
+            } catch (error) {
+                console.error('Port cleanup failed:', error);
+                addLog(`端口清理失败: ${error.message}`);
+            }
+        });
+
+        // 定期更新状态
+        setInterval(updateStatus, 5000);
+        updateStatus();
+
+        // 模型列表
+        const models = [
+            'claude-3-5-sonnet-200k', 
+            'claude-3-5-sonnet-20241022', 
+            'claude-3-haiku-200k', 
+            'claude-3-opus', 
+            'claude-3.5-haiku', 
+            'claude-3.5-sonnet', 
+            "cursor-small",
+            'gemini-1.5-flash-500k', 
+            'gemini-2.0-flash-exp', 
+            'gemini-2.0-flash-thinking-exp', 
+            'gemini-exp-1206', 
+            'gpt-3.5-turbo', 
+            'gpt-4', 
+            'gpt-4-turbo-2024-04-09', 
+            'gpt-4o', 
+            'gpt-4o-128k', 
+            'gpt-4o-mini', 
+            'o1', 
+            'o1-mini', 
+            'o1-preview'
+        ];
+
+        // 初始化时显示模型列表
+        const modelList = document.getElementById('modelList');
+        modelList.innerHTML = models.map(model => 
+            `<div class="model-item">${model}</div>`
+        ).join('');
+
+        // 更新API服务器地址
+        const updateApiServerUrl = () => {
+            const apiServerUrl = document.getElementById('apiServerUrl');
+            apiServerUrl.textContent = `http://localhost:3010`;
+        };
+
+        // 在页面加载时更新
+        updateApiServerUrl();
+    </script>
+</body>
+</html> 
