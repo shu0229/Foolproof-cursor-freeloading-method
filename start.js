@@ -12,54 +12,46 @@ let tokenProcess = null;
 let apiServer = null;
 
 // 启动API服务器
-const startApiServer = () => {
+const startApiServer = async () => {
     if (apiProcess) return false;
     
-    // 先尝试杀死可能占用3010端口的进程
     try {
-        if (process.platform === 'win32') {
-            spawn('cmd', ['/c', 'for /f "tokens=5" %a in (\'netstat -aon ^| find ":3010" ^| find "LISTENING"\') do taskkill /f /pid %a >nul 2>&1'], { shell: true });
-        } else {
-            spawn('sh', ['-c', 'lsof -ti:3010 | xargs kill -9']);
-        }
-    } catch (error) {
-        console.log('No process found on port 3010');
-    }
-
-    // 等待一小段时间确保端口释放
-    setTimeout(() => {
+        // 先清理端口
+        await cleanPort(3010);
+        
+        // 等待短暂时间确保端口完全释放
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
         console.log('Starting API server...');
-        try {
-            apiProcess = spawn('node', ['src/index.js'], {
-                stdio: 'pipe',
-                detached: true
-            });
-            
-            apiProcess.stdout.on('data', (data) => {
-                console.log(`API server: ${data}`);
-            });
-            
-            apiProcess.stderr.on('data', (data) => {
-                console.error(`API server error: ${data}`);
-            });
+        apiProcess = spawn('node', ['src/index.js'], {
+            stdio: 'pipe',
+            detached: true
+        });
+        
+        apiProcess.stdout.on('data', (data) => {
+            console.log(`API server: ${data}`);
+        });
+        
+        apiProcess.stderr.on('data', (data) => {
+            console.error(`API server error: ${data}`);
+        });
 
-            apiProcess.on('error', (error) => {
-                console.error(`Failed to start API server: ${error}`);
-                apiProcess = null;
-            });
-
-            apiProcess.on('close', (code) => {
-                console.log(`API server exited with code ${code}`);
-                apiProcess = null;
-            });
-            
-            return true;
-        } catch (error) {
-            console.error('Failed to start API server:', error);
+        apiProcess.on('error', (error) => {
+            console.error(`Failed to start API server: ${error}`);
             apiProcess = null;
-            return false;
-        }
-    }, 1000);
+        });
+
+        apiProcess.on('close', (code) => {
+            console.log(`API server exited with code ${code}`);
+            apiProcess = null;
+        });
+        
+        return true;
+    } catch (error) {
+        console.error('Failed to start API server:', error);
+        apiProcess = null;
+        return false;
+    }
 };
 
 // 停止API服务器
@@ -248,9 +240,16 @@ app.get('/api/check-port', async (req, res) => {
 app.post('/api/clean-port', async (req, res) => {
     try {
         await cleanPort(3010);
-        res.json({ message: 'Port 3010 cleaned successfully' });
+        res.json({ 
+            success: true,
+            message: 'Port 3010 cleaned successfully' 
+        });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Port cleanup failed:', error);
+        res.status(500).json({ 
+            success: false,
+            error: error.message 
+        });
     }
 });
 
@@ -274,33 +273,87 @@ const checkPortInUse = (port) => {
     });
 };
 
-// 添加端口清理函数
+// 优化端口清理函数
 const cleanPort = async (port) => {
-    if (process.platform === 'win32') {
+    return new Promise(async (resolve, reject) => {
         try {
-            await new Promise((resolve, reject) => {
-                const cmd = spawn('cmd', ['/c', `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /f /pid %a`], { shell: true });
-                cmd.on('close', (code) => {
-                    if (code === 0) resolve();
-                    else reject(new Error(`Failed to clean port ${port}`));
+            if (process.platform === 'win32') {
+                // Windows 系统 - 使用更可靠的命令组合
+                const cmd = spawn('cmd', [
+                    '/c',
+                    `netstat -ano | findstr :${port} | findstr LISTENING > nul && (for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}" ^| find "LISTENING"') do taskkill /F /PID %a) || echo Port is free`
+                ], {
+                    shell: true,
+                    stdio: 'pipe',
+                    windowsHide: true
                 });
-            });
-        } catch (error) {
-            console.log('No process found on port');
-        }
-    } else {
-        try {
-            await new Promise((resolve, reject) => {
-                const cmd = spawn('sh', ['-c', `lsof -ti:${port} | xargs kill -9`]);
-                cmd.on('close', (code) => {
-                    if (code === 0) resolve();
-                    else reject(new Error(`Failed to clean port ${port}`));
+
+                let output = '';
+                let errorOutput = '';
+
+                cmd.stdout.on('data', (data) => {
+                    output += data.toString();
                 });
-            });
+
+                cmd.stderr.on('data', (data) => {
+                    errorOutput += data.toString();
+                });
+
+                cmd.on('close', (code) => {
+                    // 端口已清理或本来就是空闲的情况都视为成功
+                    if (code === 0 || 
+                        errorOutput.includes('没有运行的任务') || 
+                        output.includes('Port is free')) {
+                        console.log(`Port ${port} is now available`);
+                        resolve(true);
+                    } else {
+                        const error = errorOutput || `Process exited with code ${code}`;
+                        console.error(`Port cleanup failed: ${error}`);
+                        reject(new Error(`Failed to clean port ${port}: ${error}`));
+                    }
+                });
+
+                cmd.on('error', (error) => {
+                    console.error(`Command execution error: ${error}`);
+                    reject(error);
+                });
+
+            } else {
+                // Unix 系统 - 使用更安全的命令组合
+                const cmd = spawn('sh', [
+                    '-c',
+                    `lsof -i:${port} | grep LISTEN | awk '{print $2}' | xargs -r kill -9 || true`
+                ], {
+                    stdio: 'pipe'
+                });
+
+                let errorOutput = '';
+
+                cmd.stderr.on('data', (data) => {
+                    errorOutput += data.toString();
+                });
+
+                cmd.on('close', (code) => {
+                    // Unix 系统下，即使没有找到进程也返回成功
+                    if (code === 0 || code === 1) {
+                        console.log(`Port ${port} is now available`);
+                        resolve(true);
+                    } else {
+                        console.error(`Port cleanup failed with code ${code}: ${errorOutput}`);
+                        reject(new Error(`Failed to clean port ${port}`));
+                    }
+                });
+
+                cmd.on('error', (error) => {
+                    console.error(`Command execution error: ${error}`);
+                    reject(error);
+                });
+            }
         } catch (error) {
-            console.log('No process found on port');
+            console.error(`Error during port cleaning: ${error}`);
+            reject(error);
         }
-    }
+    });
 };
 
 // 启动控制面板服务器
