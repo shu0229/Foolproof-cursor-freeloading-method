@@ -21,7 +21,7 @@
 
 1. **拉取到本地**
    ```bash
-   git clone https://github.com/your-repo/Cursor-To-OpenAI.git
+   git clone https://github.com/justhil/Foolproof-cursor-freeloading-method.git
    ```
 
 
