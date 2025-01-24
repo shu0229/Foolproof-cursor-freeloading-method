@@ -24,17 +24,13 @@
    git clone https://github.com/your-repo/Cursor-To-OpenAI.git
    ```
 
-2. **安装依赖**
-   ```bash
-   npm install
-   ```
 
-3. **启动项目**
+2. **启动项目**
    ```bash
    start.bat
    ```
 
-4. **访问控制面板**
+3. **访问控制面板**
    打开浏览器访问 [http://localhost:3000](http://localhost:3000)
 
 ## ⚙️ 依赖
