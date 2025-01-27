@@ -1,9 +1,21 @@
-const { v4: uuidv4 } = require('uuid');
-const zlib = require('zlib');
-const $root = require('./message.js');
-const crypto = require('crypto');
+import { v4 as uuidv4 } from 'uuid';
+import zlib from 'zlib';
+import protobuf from 'protobufjs';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const regex = /<\|BEGIN_SYSTEM\|>.*?<\|END_SYSTEM\|>.*?<\|BEGIN_USER\|>.*?<\|END_USER\|>/s;
+
+const root = protobuf.loadSync(path.join(__dirname, 'message.proto'));
+const $root = {
+  ChatMessage: root.lookupType('ChatMessage'),
+  ResMessage: root.lookupType('ResMessage')
+};
 
 async function stringToHex(messages, modelName) {
   const formattedMessages = messages.map((msg) => ({
@@ -25,6 +37,10 @@ async function stringToHex(messages, modelName) {
     requestId: uuidv4(),
     summary: '',
     conversationId: uuidv4(),
+    flag: 1,
+    option: 1,
+    type: 1,
+    state: 0,
   };
   const errMsg = $root.ChatMessage.verify(message);
   if (errMsg) throw Error(errMsg);
@@ -144,7 +160,7 @@ function generateCursorChecksum(token) {
   return `${encodedChecksum}${machineId}/${macMachineId}`;
 }
 
-module.exports = {
+export {
   stringToHex,
   chunkToUtf8String,
   getRandomIDPro,

@@ -1,11 +1,17 @@
-const express = require('express');
-const morgan = require('morgan');
-const { v4: uuidv4 } = require('uuid');
-const { stringToHex, chunkToUtf8String, generateCursorChecksum } = require('./utils.js');
-const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
-const EventEmitter = require('events');
+import express from 'express';
+import morgan from 'morgan';
+import { v4 as uuidv4 } from 'uuid';
+import { stringToHex, chunkToUtf8String, generateCursorChecksum } from './utils.js';
+import fs from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
+import { EventEmitter } from 'events';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const app = express();
 
 // 创建全局事件发射器
@@ -16,40 +22,63 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 app.use(morgan(process.env.MORGAN_FORMAT ?? 'tiny'));
 
-// 新增：读取token.txt文件
-let authToken = '';
-try {
-  const tokenPath = path.join(__dirname, 'token.txt');
-  const tokens = fs.readFileSync(tokenPath, 'utf-8')
-    .split(',')
-    .map(t => t.trim())
-    .filter(t => t.length > 0);
+// 添加错误处理中间件
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
-  if (tokens.length === 0) {
-    throw new Error('token.txt is empty or contains invalid format');
+// Token轮询管理
+let tokenIndex = 0;
+let localTokens = [];
+
+// 读取并更新本地token列表
+const updateLocalTokens = () => {
+  try {
+    const tokenPath = path.join(__dirname, 'token.txt');
+    if (fs.existsSync(tokenPath)) {
+      const content = fs.readFileSync(tokenPath, 'utf-8').trim();
+      if (content) {
+        localTokens = content.split(',')
+          .map(t => t.trim())
+          .filter(t => t.length > 0);
+        console.log(`已加载 ${localTokens.length} 个Token`);
+        return true;
+      }
+    }
+    console.error('token.txt 为空或不存在');
+    return false;
+  } catch (error) {
+    console.error('读取token文件失败:', error);
+    return false;
   }
+};
 
-  // 随机选择一个token并处理分隔符
-  let selectedToken = tokens[Math.floor(Math.random() * tokens.length)];
+// 获取下一个可用的token
+const getNextToken = () => {
+  if (localTokens.length === 0) {
+    if (!updateLocalTokens()) {
+      throw new Error('没有可用的Token');
+    }
+  }
   
-  // 保留对token格式的处理
-  if (selectedToken.includes('%3A%3A')) {
-    selectedToken = selectedToken.split('%3A%3A')[1];
+  const token = localTokens[tokenIndex];
+  tokenIndex = (tokenIndex + 1) % localTokens.length;
+  
+  // 处理token格式
+  let processedToken = token;
+  if (processedToken.includes('%3A%3A')) {
+    processedToken = processedToken.split('%3A%3A')[1];
   }
-  if (selectedToken.includes('::')) {
-    selectedToken = selectedToken.split('::')[1];
+  if (processedToken.includes('::')) {
+    processedToken = processedToken.split('::')[1];
   }
   
-  authToken = selectedToken;
+  return processedToken.trim();
+};
 
-  console.log('Token loaded successfully'); // 添加日志
-  console.log('Token loaded, length:', authToken.length);
-  console.log('Token prefix:', authToken.substring(0, 5) + '...');
-
-} catch (error) {
-  console.error('Error reading token file:', error.message);
-  process.exit(1);
-}
+// 初始化加载token
+updateLocalTokens();
 
 app.post('/v1/chat/completions', async (req, res) => {
   // o1开头的模型，不支持流式输出
@@ -68,11 +97,35 @@ app.post('/v1/chat/completions', async (req, res) => {
       });
     }
 
-    const hexData = await stringToHex(messages, model);
+    // 获取下一个token
+    const authToken = getNextToken();
 
+    const hexData = await stringToHex(messages, model);
     const checksum = req.headers['x-cursor-checksum'] 
       ?? process.env['x-cursor-checksum'] 
-      ?? generateCursorChecksum(authToken.trim());
+      ?? generateCursorChecksum(authToken);
+
+    try {
+      await fetch('https://api2.cursor.sh/aiserver.v1.AiService/CheckFeatureStatus', {
+        method: 'POST',
+        headers: {
+          'accept-encoding': 'gzip',
+          'authorization': `Bearer ${authToken}`,
+          'connect-protocol-version': '1',
+          'content-type': 'application/proto',
+          'user-agent': 'connect-es/1.6.1',
+          'x-cursor-checksum': checksum,
+          'x-cursor-client-version': '0.45.3',
+          'x-cursor-timezone': 'Asia/Hong_Kong',
+          'x-ghost-mode': 'false',
+          'x-session-id': uuidv4(),
+          'Host': 'api2.cursor.sh',
+        },
+        body: 'cppExistingUserMarketingPopup'
+      });
+    } catch (error) {
+      console.error('CheckFeatureStatus error:', error);
+    }
 
     const response = await fetch('https://api2.cursor.sh/aiserver.v1.AiService/StreamChat', {
       method: 'POST',
@@ -84,8 +137,8 @@ app.post('/v1/chat/completions', async (req, res) => {
         'user-agent': 'connect-es/1.4.0',
         'x-amzn-trace-id': `Root=${uuidv4()}`,
         'x-cursor-checksum': checksum,
-        'x-cursor-client-version': '0.42.3',
-        'x-cursor-timezone': 'Asia/Shanghai',
+        'x-cursor-client-version': '0.45.3',
+        'x-cursor-timezone': 'Asia/Hong_Kong',
         'x-ghost-mode': 'false',
         'x-request-id': uuidv4(),
         Host: 'api2.cursor.sh',
@@ -95,17 +148,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         connect: 5000,    // 连接超时 5 秒
         read: 30000       // 读取超时 30 秒
       }
-    }).catch(error => {
-      console.error('Fetch error:', error);
-      throw error;
     });
-
-    if (!response.ok) {
-      console.error('API response not ok:', response.status, response.statusText);
-      const text = await response.text();
-      console.error('Response body:', text);
-      throw new Error(`API request failed: ${response.status}`);
-    }
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -350,6 +393,198 @@ app.post('/stop-token', (req, res) => {
   }
 });
 
+// 定义支持的模型列表
+const SUPPORTED_MODELS = [
+  {
+    "id": "claude-3-5-sonnet-200k",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3-5-sonnet-200k",
+    "parent": null
+  },
+  {
+    "id": "claude-3-5-sonnet-20241022",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3-5-sonnet-20241022",
+    "parent": null
+  },
+  {
+    "id": "claude-3-haiku-200k",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3-haiku-200k",
+    "parent": null
+  },
+  {
+    "id": "claude-3-opus",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3-opus",
+    "parent": null
+  },
+  {
+    "id": "claude-3.5-haiku",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3.5-haiku",
+    "parent": null
+  },
+  {
+    "id": "claude-3.5-sonnet",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3.5-sonnet",
+    "parent": null
+  },
+  {
+    "id": "cursor-small",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "cursor",
+    "permission": [],
+    "root": "cursor-small",
+    "parent": null
+  },
+  {
+    "id": "gemini-1.5-flash-500k",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "google",
+    "permission": [],
+    "root": "gemini-1.5-flash-500k",
+    "parent": null
+  },
+  {
+    "id": "gemini-2.0-flash-exp",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "google",
+    "permission": [],
+    "root": "gemini-2.0-flash-exp",
+    "parent": null
+  },
+  {
+    "id": "gemini-2.0-flash-thinking-exp",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "google",
+    "permission": [],
+    "root": "gemini-2.0-flash-thinking-exp",
+    "parent": null
+  },
+  {
+    "id": "gemini-exp-1206",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "google",
+    "permission": [],
+    "root": "gemini-exp-1206",
+    "parent": null
+  },
+  {
+    "id": "gpt-3.5-turbo",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "gpt-3.5-turbo",
+    "parent": null
+  },
+  {
+    "id": "gpt-4",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "gpt-4",
+    "parent": null
+  },
+  {
+    "id": "gpt-4-turbo-2024-04-09",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "gpt-4-turbo-2024-04-09",
+    "parent": null
+  },
+  {
+    "id": "gpt-4o",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "gpt-4o",
+    "parent": null
+  },
+  {
+    "id": "gpt-4o-128k",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "gpt-4o-128k",
+    "parent": null
+  },
+  {
+    "id": "gpt-4o-mini",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "gpt-4o-mini",
+    "parent": null
+  },
+  {
+    "id": "o1",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "o1",
+    "parent": null
+  },
+  {
+    "id": "o1-mini",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "o1-mini",
+    "parent": null
+  },
+  {
+    "id": "o1-preview",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "openai",
+    "permission": [],
+    "root": "o1-preview",
+    "parent": null
+  }
+];
+
+// 添加模型列表端点
+app.get('/v1/models', (req, res) => {
+  res.json({
+    "object": "list",
+    "data": SUPPORTED_MODELS
+  });
+});
+
 // 修改启动服务器部分
 const startServer = () => {
     const PORT = process.env.PORT || 3010;
@@ -373,12 +608,6 @@ const startServer = () => {
 };
 
 startServer();
-
-// 在app.use之后添加错误处理中间件
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
-});
 
 // 添加进程异常处理
 process.on('uncaughtException', (error) => {

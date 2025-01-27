@@ -1,7 +1,13 @@
-const { spawn } = require('child_process');
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
+import { spawn } from 'child_process';
+import express from 'express';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const app = express();
 
 app.use(express.static(path.join(__dirname)));
@@ -226,6 +232,47 @@ app.get('/api/tokens', (req, res) => {
     }
 });
 
+// 添加删除token的路由
+app.post('/api/tokens/delete', (req, res) => {
+    try {
+        const { tokens } = req.body;
+        if (!Array.isArray(tokens) || tokens.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: '无效的请求参数'
+            });
+        }
+
+        const tokenPath = path.join(__dirname, 'src/token.txt');
+        let existingTokens = [];
+        
+        if (fs.existsSync(tokenPath)) {
+            existingTokens = fs.readFileSync(tokenPath, 'utf-8')
+                .split(',')
+                .map(t => t.trim())
+                .filter(t => t);
+        }
+
+        // 过滤掉要删除的token
+        const remainingTokens = existingTokens.filter(token => !tokens.includes(token));
+
+        // 写回文件
+        fs.writeFileSync(tokenPath, remainingTokens.join(','), 'utf-8');
+
+        res.json({
+            success: true,
+            message: `成功删除 ${tokens.length} 个Token`,
+            remainingCount: remainingTokens.length
+        });
+    } catch (error) {
+        console.error('Failed to delete tokens:', error);
+        res.status(500).json({
+            success: false,
+            message: `删除Token失败: ${error.message}`
+        });
+    }
+});
+
 // 添加端口检查路由
 app.get('/api/check-port', async (req, res) => {
     try {
@@ -355,6 +402,30 @@ const cleanPort = async (port) => {
         }
     });
 };
+
+// 添加延迟测试路由
+app.post('/api/test-latency', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) {
+            return res.status(400).json({
+                success: false,
+                error: '无效的Token'
+            });
+        }
+
+        const { testTokenLatency } = await import('./src/test.js');
+        const result = await testTokenLatency(token);
+        
+        res.json(result);
+    } catch (error) {
+        console.error('Latency test failed:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 // 启动控制面板服务器
 const PORT = 3000;

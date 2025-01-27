@@ -3,15 +3,20 @@
   "version": "1.0.0",
   "description": "Cursor API proxy to OpenAI format",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "start": "node start.js",
     "api": "node src/index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
+    "lru-cache": "^11.0.2",
     "morgan": "^1.10.0",
-    "uuid": "^9.0.1",
+    "node-fetch": "^3.3.2",
+    "p-limit": "^6.2.0",
+    "p-retry": "^6.2.1",
     "protobufjs": "^7.2.6",
+    "uuid": "^9.0.1",
     "ws": "^8.16.0"
   },
   "keywords": [],
