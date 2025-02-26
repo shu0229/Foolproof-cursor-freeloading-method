@@ -450,6 +450,15 @@ const SUPPORTED_MODELS = [
     "parent": null
   },
   {
+    "id": "claude-3.7-sonnet",
+    "object": "model",
+    "created": 1706745939,
+    "owned_by": "anthropic",
+    "permission": [],
+    "root": "claude-3.7-sonnet",
+    "parent": null
+  },
+  {
     "id": "cursor-small",
     "object": "model",
     "created": 1706745939,
